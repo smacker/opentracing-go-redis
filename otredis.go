@@ -4,9 +4,9 @@ import (
 	"context"
 	"strings"
 
-	"github.com/go-redis/redis"
 	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/ext"
+	"gopkg.in/redis.v5"
 )
 
 // WrapRedisClient adds opentracing measurements for commands and returns cloned client
