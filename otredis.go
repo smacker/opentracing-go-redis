@@ -2,7 +2,6 @@ package otredis
 
 import (
 	"context"
-	"strings"
 
 	"github.com/go-redis/redis"
 	opentracing "github.com/opentracing/opentracing-go"
@@ -26,7 +25,7 @@ func WrapRedisClient(ctx context.Context, c *redis.Client) *redis.Client {
 			tr := parentSpan.Tracer()
 			sp := tr.StartSpan("redis", opentracing.ChildOf(parentSpan.Context()))
 			ext.DBType.Set(sp, "redis")
-			sp.SetTag("db.method", strings.Split(cmd.String(), " ")[0])
+			sp.SetTag("db.method", cmd.Name())
 			defer sp.Finish()
 
 			return oldProcess(cmd)
