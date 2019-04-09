@@ -56,7 +56,7 @@ func (ts *OpenTracingRedisTestSuite) Test_ProcessExecution() {
 
 	span, ctx := opentracing.StartSpanFromContext(ctx, "test-process-execution")
 
-	_, err := WrapWithOpenTracing(ctx, ts.client).HMSet(hmSetKey, hmSetValues).Result()
+	_, err := WrapRedisClient(ctx, ts.client).HMSet(hmSetKey, hmSetValues).Result()
 	assert.Nil(t, err, "redis execution failed: %+v", err)
 
 	span.Finish()
@@ -83,7 +83,7 @@ func (ts *OpenTracingRedisTestSuite) Test_ProcessPipelineExecution() {
 
 	span, ctx := opentracing.StartSpanFromContext(ctx, "test-process-pipeline-execution")
 
-	pipeline := WrapWithOpenTracing(ctx, ts.client).TxPipeline()
+	pipeline := WrapRedisClient(ctx, ts.client).TxPipeline()
 	pipeline.HMSet(hmSetKey, hmSetValues)
 	_, err := pipeline.Exec()
 	assert.Nil(t, err, "redis pipeline execution failed: %+v", err)

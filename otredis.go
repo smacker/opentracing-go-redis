@@ -10,7 +10,7 @@ import (
 	"github.com/opentracing/opentracing-go/ext"
 )
 
-func WrapWithOpenTracing(ctx context.Context, client *redis.Client) *redis.Client {
+func WrapRedisClient(ctx context.Context, client *redis.Client) *redis.Client {
 	if ctx == nil {
 		return client
 	}
