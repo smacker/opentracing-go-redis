@@ -2,34 +2,68 @@ package otredis
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/go-redis/redis"
-	opentracing "github.com/opentracing/opentracing-go"
+	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/ext"
 )
 
-// WrapRedisClient adds opentracing measurements for commands and returns cloned client
-func WrapRedisClient(ctx context.Context, c *redis.Client) *redis.Client {
+func WrapWithOpenTracing(ctx context.Context, client *redis.Client) *redis.Client {
 	if ctx == nil {
-		return c
+		return client
 	}
 	parentSpan := opentracing.SpanFromContext(ctx)
 	if parentSpan == nil {
-		return c
+		return client
 	}
+	clientWithContext := client.WithContext(ctx)
+	opts := clientWithContext.Options()
+	clientWithContext.WrapProcess(process(parentSpan, opts))
+	clientWithContext.WrapProcessPipeline(processPipeline(parentSpan, opts))
+	return clientWithContext
+}
 
-	// clone using context
-	copy := c.WithContext(c.Context())
-	copy.WrapProcess(func(oldProcess func(cmd redis.Cmder) error) func(cmd redis.Cmder) error {
+func process(parentSpan opentracing.Span, opts *redis.Options) func(oldProcess func(cmd redis.Cmder) error) func(cmd redis.Cmder) error {
+	return func(oldProcess func(cmd redis.Cmder) error) func(cmd redis.Cmder) error {
 		return func(cmd redis.Cmder) error {
-			tr := parentSpan.Tracer()
-			sp := tr.StartSpan("redis", opentracing.ChildOf(parentSpan.Context()))
-			ext.DBType.Set(sp, "redis")
-			sp.SetTag("db.method", cmd.Name())
-			defer sp.Finish()
-
+			dbStatement := formatCommandAsDbStatement(cmd)
+			doSpan(parentSpan, opts, "redis-cmd", dbStatement)
 			return oldProcess(cmd)
 		}
-	})
-	return copy
+	}
+}
+
+func processPipeline(parentSpan opentracing.Span, opts *redis.Options) func(oldProcess func(cmds []redis.Cmder) error) func(cmds []redis.Cmder) error {
+	return func(oldProcess func(cmds []redis.Cmder) error) func(cmds []redis.Cmder) error {
+		return func(cmds []redis.Cmder) error {
+			dbStatement := formatCommandsAsDbStatement(cmds)
+			doSpan(parentSpan, opts, "redis-pipeline-cmd", dbStatement)
+			return oldProcess(cmds)
+		}
+	}
+}
+
+func formatCommandAsDbStatement(cmd redis.Cmder) string {
+	return fmt.Sprintf("%s", cmd)
+}
+
+func formatCommandsAsDbStatement(cmds []redis.Cmder) string {
+	cmdsAsDbStatements := make([]string, len(cmds))
+	for i, cmd := range cmds {
+		cmdAsDbStatement := formatCommandAsDbStatement(cmd)
+		cmdsAsDbStatements[i] = cmdAsDbStatement
+	}
+	return strings.Join(cmdsAsDbStatements, "\n")
+}
+
+func doSpan(parentSpan opentracing.Span, opts *redis.Options, operationName, dbStatement string) {
+	tr := parentSpan.Tracer()
+	span := tr.StartSpan(operationName, opentracing.ChildOf(parentSpan.Context()))
+	defer span.Finish()
+	ext.DBType.Set(span, "redis")
+	ext.DBStatement.Set(span, dbStatement)
+	ext.PeerAddress.Set(span, opts.Addr)
+	ext.SpanKind.Set(span, ext.SpanKindEnum("client"))
 }
