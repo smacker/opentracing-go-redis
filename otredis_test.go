@@ -2,7 +2,9 @@ package otredis
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/alicebob/miniredis"
@@ -55,8 +57,10 @@ func TestSet(t *testing.T) {
 	redisSpan := spans[0]
 	assert.Equal(t, "redis-cmd", redisSpan.OperationName)
 
-	expectedTags := buildExpectedTags("set", "set foo with span")
-	assertTags(t, redisSpan, expectedTags)
+	expectedTags := buildExpectedTags("set")
+	actualTags := assertTags(t, redisSpan, expectedTags)
+	actualDbStatementValue := actualTags["db.statement"]
+	assert.Equal(t, "set foo with span", actualDbStatementValue, "redis span tag 'db.statement' is invalid")
 
 	tracer.Reset()
 }
@@ -78,8 +82,11 @@ func TestSetPipeline(t *testing.T) {
 	redisSpan := spans[0]
 	assert.Equal(t, "redis-pipeline-cmd", redisSpan.OperationName)
 
-	expectedTags := buildExpectedTags("set -> set", "set foo with span on foo pipeline\nset bar with span on bar pipeline")
-	assertTags(t, redisSpan, expectedTags)
+	expectedTags := buildExpectedTags("set -> set")
+	actualTags := assertTags(t, redisSpan, expectedTags)
+	actualDbStatementValue := fmt.Sprint(actualTags["db.statement"])
+	assert.True(t, strings.Contains(actualDbStatementValue, "set foo with span on foo pipeline"), "redis span tag 'db.statement' is invalid")
+	assert.True(t, strings.Contains(actualDbStatementValue, "set bar with span on bar pipeline"), "redis span tag 'db.statement' is invalid")
 
 	tracer.Reset()
 }
@@ -114,8 +121,10 @@ func TestGet(t *testing.T) {
 	redisSpan := spans[0]
 	assert.Equal(t, "redis-cmd", redisSpan.OperationName)
 
-	expectedTags := buildExpectedTags("get", "get foo")
-	assertTags(t, redisSpan, expectedTags)
+	expectedTags := buildExpectedTags("get")
+	actualTags := assertTags(t, redisSpan, expectedTags)
+	actualDbStatementValue := actualTags["db.statement"]
+	assert.Equal(t, "get foo", actualDbStatementValue, "redis span tag 'db.statement' is invalid")
 
 	tracer.Reset()
 }
@@ -135,8 +144,11 @@ func TestGetPipeline(t *testing.T) {
 	redisSpan := spans[0]
 	assert.Equal(t, "redis-pipeline-cmd", redisSpan.OperationName)
 
-	expectedTags := buildExpectedTags("get -> get", "get foo\nget bar")
-	assertTags(t, redisSpan, expectedTags)
+	expectedTags := buildExpectedTags("get -> get")
+	actualTags := assertTags(t, redisSpan, expectedTags)
+	actualDbStatementValue := fmt.Sprint(actualTags["db.statement"])
+	assert.True(t, strings.Contains(actualDbStatementValue, "get foo"), "redis span tag 'db.statement' is invalid")
+	assert.True(t, strings.Contains(actualDbStatementValue, "get bar"), "redis span tag 'db.statement' is invalid")
 
 	tracer.Reset()
 }
@@ -157,22 +169,26 @@ func callGetPipeline(t *testing.T, client *redis.Client, getPipelineParams []str
 
 // MISC
 
-func buildExpectedTags(expectedDbMethod, expectedDbStatement string) map[string]interface{} {
+func buildExpectedTags(expectedDbMethod string) map[string]interface{} {
 	expectedTags := make(map[string]interface{})
 	expectedTags["db.type"] = "redis"
 	expectedTags["db.method"] = expectedDbMethod
-	expectedTags["db.statement"] = expectedDbStatement
+	expectedTags["db.statement"] = ""
 	expectedTags["peer.address"] = redisAddr
 	expectedTags["span.kind"] = ext.SpanKindEnum("client")
 	return expectedTags
 }
 
-func assertTags(t *testing.T, redisSpan *mocktracer.MockSpan, expectedTags map[string]interface{}) {
+func assertTags(t *testing.T, redisSpan *mocktracer.MockSpan, expectedTags map[string]interface{}) map[string]interface{} {
 	actualTags := redisSpan.Tags()
 	assert.Equal(t, len(expectedTags), len(actualTags), "redis span tags number is invalid")
 	for expectedTagKey, expectedTagValue := range expectedTags {
-		actualTag, ok := actualTags[expectedTagKey]
+		actualTagValue, ok := actualTags[expectedTagKey]
 		assert.True(t, ok, "redis span doesn't have tag '%s'", expectedTagKey)
-		assert.Equal(t, expectedTagValue, actualTag, "redis span tag '%s' is invalid", expectedTagKey)
+		// db.statement tag is asserted outside as randomly generated because of redis
+		if expectedTagKey != "db.statement" {
+			assert.Equal(t, expectedTagValue, actualTagValue, "redis span tag '%s' is invalid", expectedTagKey)
+		}
 	}
+	return actualTags
 }

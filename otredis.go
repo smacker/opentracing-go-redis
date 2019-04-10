@@ -47,9 +47,9 @@ func processPipeline(parentSpan opentracing.Span, opts *redis.Options) func(oldP
 
 func formatCommandAsDbTags(cmd redis.Cmder) (string, string) {
 	dbMethod := cmd.Name()
-	var sprintArgs []string
-	for _, arg := range cmd.Args() {
-		sprintArgs = append(sprintArgs, fmt.Sprint(arg))
+	sprintArgs := make([]string, len(cmd.Args()))
+	for i, arg := range cmd.Args() {
+		sprintArgs[i] = fmt.Sprint(arg)
 	}
 	dbStatement := strings.Join(sprintArgs, " ")
 	return dbMethod, dbStatement
@@ -67,8 +67,8 @@ func formatCommandsAsDbTags(cmds []redis.Cmder) (string, string) {
 }
 
 func doSpan(parentSpan opentracing.Span, opts *redis.Options, operationName, dbMethod, dbStatement string) {
-	tr := parentSpan.Tracer()
-	span := tr.StartSpan(operationName, opentracing.ChildOf(parentSpan.Context()))
+	tracer := parentSpan.Tracer()
+	span := tracer.StartSpan(operationName, opentracing.ChildOf(parentSpan.Context()))
 	defer span.Finish()
 	ext.DBType.Set(span, "redis")
 	span.SetTag("db.method", dbMethod)
