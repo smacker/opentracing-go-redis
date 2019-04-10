@@ -18,18 +18,18 @@ func WrapRedisClient(ctx context.Context, client *redis.Client) *redis.Client {
 	if parentSpan == nil {
 		return client
 	}
-	clientWithContext := client.WithContext(ctx)
-	opts := clientWithContext.Options()
-	clientWithContext.WrapProcess(process(parentSpan, opts))
-	clientWithContext.WrapProcessPipeline(processPipeline(parentSpan, opts))
-	return clientWithContext
+	ctxClient := client.WithContext(ctx)
+	opts := ctxClient.Options()
+	ctxClient.WrapProcess(process(parentSpan, opts))
+	ctxClient.WrapProcessPipeline(processPipeline(parentSpan, opts))
+	return ctxClient
 }
 
 func process(parentSpan opentracing.Span, opts *redis.Options) func(oldProcess func(cmd redis.Cmder) error) func(cmd redis.Cmder) error {
 	return func(oldProcess func(cmd redis.Cmder) error) func(cmd redis.Cmder) error {
 		return func(cmd redis.Cmder) error {
-			dbStatement := formatCommandAsDbStatement(cmd)
-			doSpan(parentSpan, opts, "redis-cmd", dbStatement)
+			dbMethod, dbStatement := formatCommandAsDbTags(cmd)
+			doSpan(parentSpan, opts, "redis-cmd", dbMethod, dbStatement)
 			return oldProcess(cmd)
 		}
 	}
@@ -38,31 +38,40 @@ func process(parentSpan opentracing.Span, opts *redis.Options) func(oldProcess f
 func processPipeline(parentSpan opentracing.Span, opts *redis.Options) func(oldProcess func(cmds []redis.Cmder) error) func(cmds []redis.Cmder) error {
 	return func(oldProcess func(cmds []redis.Cmder) error) func(cmds []redis.Cmder) error {
 		return func(cmds []redis.Cmder) error {
-			dbStatement := formatCommandsAsDbStatement(cmds)
-			doSpan(parentSpan, opts, "redis-pipeline-cmd", dbStatement)
+			dbMethod, dbStatement := formatCommandsAsDbTags(cmds)
+			doSpan(parentSpan, opts, "redis-pipeline-cmd", dbMethod, dbStatement)
 			return oldProcess(cmds)
 		}
 	}
 }
 
-func formatCommandAsDbStatement(cmd redis.Cmder) string {
-	return fmt.Sprintf("%s", cmd)
+func formatCommandAsDbTags(cmd redis.Cmder) (string, string) {
+	dbMethod := cmd.Name()
+	var sprintArgs []string
+	for _, arg := range cmd.Args() {
+		sprintArgs = append(sprintArgs, fmt.Sprint(arg))
+	}
+	dbStatement := strings.Join(sprintArgs, " ")
+	return dbMethod, dbStatement
 }
 
-func formatCommandsAsDbStatement(cmds []redis.Cmder) string {
+func formatCommandsAsDbTags(cmds []redis.Cmder) (string, string) {
+	cmdsAsDbMethods := make([]string, len(cmds))
 	cmdsAsDbStatements := make([]string, len(cmds))
 	for i, cmd := range cmds {
-		cmdAsDbStatement := formatCommandAsDbStatement(cmd)
-		cmdsAsDbStatements[i] = cmdAsDbStatement
+		dbMethod, dbStatement := formatCommandAsDbTags(cmd)
+		cmdsAsDbMethods[i] = dbMethod
+		cmdsAsDbStatements[i] = dbStatement
 	}
-	return strings.Join(cmdsAsDbStatements, "\n")
+	return strings.Join(cmdsAsDbMethods, " -> "), strings.Join(cmdsAsDbStatements, "\n")
 }
 
-func doSpan(parentSpan opentracing.Span, opts *redis.Options, operationName, dbStatement string) {
+func doSpan(parentSpan opentracing.Span, opts *redis.Options, operationName, dbMethod, dbStatement string) {
 	tr := parentSpan.Tracer()
 	span := tr.StartSpan(operationName, opentracing.ChildOf(parentSpan.Context()))
 	defer span.Finish()
 	ext.DBType.Set(span, "redis")
+	span.SetTag("db.method", dbMethod)
 	ext.DBStatement.Set(span, dbStatement)
 	ext.PeerAddress.Set(span, opts.Addr)
 	ext.SpanKind.Set(span, ext.SpanKindEnum("client"))
