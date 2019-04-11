@@ -7,10 +7,13 @@ import (
 
 	"github.com/alicebob/miniredis"
 	"github.com/go-redis/redis"
-	opentracing "github.com/opentracing/opentracing-go"
+	"github.com/opentracing/opentracing-go"
+	"github.com/opentracing/opentracing-go/ext"
 	"github.com/opentracing/opentracing-go/mocktracer"
+	"github.com/stretchr/testify/assert"
 )
 
+var redisAddr string
 var client *redis.Client
 var tracer *mocktracer.MockTracer
 
@@ -21,98 +24,159 @@ func init() {
 
 func TestMain(m *testing.M) {
 	// in-memory redis
-	s, err := miniredis.Run()
+	miniRedis, err := miniredis.Run()
 	if err != nil {
 		panic(err)
 	}
-	defer s.Close()
+	defer miniRedis.Close()
+
+	redisAddr = miniRedis.Addr()
+
 	client = redis.NewClient(&redis.Options{
-		Addr: s.Addr(),
+		Addr: redisAddr,
 	})
 
 	os.Exit(m.Run())
 }
 
+// SET
+
 func TestSet(t *testing.T) {
 	ctx := context.Background()
+	assert := assert.New(t)
 
-	span, ctx := opentracing.StartSpanFromContext(ctx, "test-params")
+	span, ctx := opentracing.StartSpanFromContext(ctx, "test-set")
 	ctxClient := WrapRedisClient(ctx, client)
-	callSet(t, ctxClient, "with span")
+	callSet(assert, ctxClient, "with span")
 	span.Finish()
 
 	spans := tracer.FinishedSpans()
-	if len(spans) != 2 {
-		t.Fatalf("should be 2 finished spans but there are %d: %v", len(spans), spans)
-	}
+	assert.Len(spans, 2, "the number of finished spans is invalid")
 
 	redisSpan := spans[0]
-	if redisSpan.OperationName != "redis" {
-		t.Errorf("first span operation should be redis but it's '%s'", redisSpan.OperationName)
-	}
+	assert.Equal("redis-cmd", redisSpan.OperationName)
 
-	testTags(t, redisSpan, map[string]string{
-		"db.type":   "redis",
-		"db.method": "set",
-	})
+	expectedTags := buildExpectedTags("set")
+	assertTags(assert, redisSpan, expectedTags)
 
 	tracer.Reset()
 }
+
+func TestSetPipeline(t *testing.T) {
+	ctx := context.Background()
+	assert := assert.New(t)
+
+	span, ctx := opentracing.StartSpanFromContext(ctx, "test-set-pipeline")
+	ctxClient := WrapRedisClient(ctx, client)
+	setPipelineParams := make(map[string]string)
+	setPipelineParams["foo"] = "with span on foo pipeline"
+	setPipelineParams["bar"] = "with span on bar pipeline"
+	callSetPipeline(assert, ctxClient, setPipelineParams)
+	span.Finish()
+
+	spans := tracer.FinishedSpans()
+	assert.Len(spans, 2, "the number of finished spans is invalid")
+
+	redisSpan := spans[0]
+	assert.Equal("redis-pipeline-cmd", redisSpan.OperationName)
+
+	expectedTags := buildExpectedTags("set -> set")
+	assertTags(assert, redisSpan, expectedTags)
+
+	tracer.Reset()
+}
+
+func callSet(assert *assert.Assertions, client *redis.Client, value string) {
+	_, err := client.Set("foo", value, 0).Result()
+	assert.Nil(err, "Redis returned error: %v", err)
+}
+
+func callSetPipeline(assert *assert.Assertions, client *redis.Client, setPipelineParams map[string]string) {
+	pipeline := client.Pipeline()
+	for key, value := range setPipelineParams {
+		pipeline.Set(key, value, 0)
+	}
+	_, err := pipeline.Exec()
+	assert.Nil(err, "Redis returned error: %v", err)
+}
+
+// GET
 
 func TestGet(t *testing.T) {
 	ctx := context.Background()
+	assert := assert.New(t)
 
-	span, ctx := opentracing.StartSpanFromContext(ctx, "test-params")
+	span, ctx := opentracing.StartSpanFromContext(ctx, "test-get")
 	ctxClient := WrapRedisClient(ctx, client)
-	callGet(t, ctxClient)
+	callGet(assert, ctxClient)
 	span.Finish()
 
 	spans := tracer.FinishedSpans()
-	if len(spans) != 2 {
-		t.Fatalf("should be 2 finished spans but there are %d: %v", len(spans), spans)
-	}
+	assert.Len(spans, 2, "the number of finished spans is invalid")
 
 	redisSpan := spans[0]
-	if redisSpan.OperationName != "redis" {
-		t.Errorf("first span operation should be redis but it's '%s'", redisSpan.OperationName)
-	}
+	assert.Equal("redis-cmd", redisSpan.OperationName)
 
-	testTags(t, redisSpan, map[string]string{
-		"db.type":   "redis",
-		"db.method": "get",
-	})
+	expectedTags := buildExpectedTags("get")
+	assertTags(assert, redisSpan, expectedTags)
 
 	tracer.Reset()
 }
 
-func callSet(t *testing.T, c *redis.Client, value string) {
-	_, err := c.Set("foo", value, 0).Result()
-	if err != nil {
-		t.Fatalf("Redis returned error: %v", err)
-	}
+func TestGetPipeline(t *testing.T) {
+	ctx := context.Background()
+	assert := assert.New(t)
+
+	span, ctx := opentracing.StartSpanFromContext(ctx, "test-get-pipeline")
+	ctxClient := WrapRedisClient(ctx, client)
+	getPipelineParams := []string{"foo", "bar"}
+	callGetPipeline(assert, ctxClient, getPipelineParams)
+	span.Finish()
+
+	spans := tracer.FinishedSpans()
+	assert.Len(spans, 2, "the number of finished spans is invalid")
+
+	redisSpan := spans[0]
+	assert.Equal("redis-pipeline-cmd", redisSpan.OperationName)
+
+	expectedTags := buildExpectedTags("get -> get")
+	assertTags(assert, redisSpan, expectedTags)
+
+	tracer.Reset()
 }
 
-func callGet(t *testing.T, c *redis.Client) {
-	_, err := c.Get("foo").Result()
-	if err != nil {
-		t.Fatalf("Redis returned error: %v", err)
-	}
+func callGet(assert *assert.Assertions, client *redis.Client) {
+	_, err := client.Get("foo").Result()
+	assert.Nil(err, "Redis returned error: %v", err)
 }
 
-func testTags(t *testing.T, redisSpan *mocktracer.MockSpan, expectedTags map[string]string) {
-	redisTags := redisSpan.Tags()
-	if len(redisTags) != len(expectedTags) {
-		t.Errorf("redis span should have %d tags but it has %d", len(expectedTags), len(redisTags))
+func callGetPipeline(assert *assert.Assertions, client *redis.Client, getPipelineParams []string) {
+	pipeline := client.Pipeline()
+	for _, key := range getPipelineParams {
+		pipeline.Get(key)
 	}
+	_, err := pipeline.Exec()
+	assert.Nil(err, "Redis returned error: %v", err)
+}
 
-	for name, expected := range expectedTags {
-		value, ok := redisTags[name]
-		if !ok {
-			t.Errorf("redis span doesn't have tag '%s'", name)
-			continue
-		}
-		if value != expected {
-			t.Errorf("redis span tag '%s' should have value '%s' but it has '%s'", name, expected, value)
-		}
+// MISC
+
+func buildExpectedTags(expectedDbMethod string) map[string]interface{} {
+	expectedTags := make(map[string]interface{})
+	expectedTags["db.type"] = "redis"
+	expectedTags["db.method"] = expectedDbMethod
+	expectedTags["peer.address"] = redisAddr
+	expectedTags["span.kind"] = ext.SpanKindEnum("client")
+	return expectedTags
+}
+
+func assertTags(assert *assert.Assertions, redisSpan *mocktracer.MockSpan, expectedTags map[string]interface{}) map[string]interface{} {
+	actualTags := redisSpan.Tags()
+	assert.Len(actualTags, len(expectedTags), "redis span tags number is invalid")
+	for expectedTagKey, expectedTagValue := range expectedTags {
+		actualTagValue, ok := actualTags[expectedTagKey]
+		assert.True(ok, "redis span doesn't have tag '%s'", expectedTagKey)
+		assert.Equal(expectedTagValue, actualTagValue, "redis span tag '%s' is invalid", expectedTagKey)
 	}
+	return actualTags
 }
