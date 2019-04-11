@@ -9,6 +9,7 @@ import (
 	"github.com/opentracing/opentracing-go/ext"
 )
 
+// WrapRedisClient adds opentracing measurements for commands and returns cloned client
 func WrapRedisClient(ctx context.Context, client *redis.Client) *redis.Client {
 	if ctx == nil {
 		return client
@@ -17,6 +18,7 @@ func WrapRedisClient(ctx context.Context, client *redis.Client) *redis.Client {
 	if parentSpan == nil {
 		return client
 	}
+	// clone using context
 	ctxClient := client.WithContext(ctx)
 	opts := ctxClient.Options()
 	ctxClient.WrapProcess(process(parentSpan, opts))
