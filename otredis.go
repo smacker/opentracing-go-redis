@@ -61,12 +61,12 @@ func formatCommandsAsDbMethods(cmds []redis.Cmder) string {
 	return strings.Join(cmdsAsDbMethods, " -> ")
 }
 
-func getSpan(parentSpan opentracing.Span, opts *redis.Options, operationName, dbMethod string) (span opentracing.Span) {
+func getSpan(parentSpan opentracing.Span, opts *redis.Options, operationName, dbMethod string) opentracing.Span {
 	tracer := parentSpan.Tracer()
-	span = tracer.StartSpan(operationName, opentracing.ChildOf(parentSpan.Context()))
+	span := tracer.StartSpan(operationName, opentracing.ChildOf(parentSpan.Context()))
 	ext.DBType.Set(span, "redis")
 	ext.PeerAddress.Set(span, opts.Addr)
 	ext.SpanKind.Set(span, ext.SpanKindEnum("client"))
 	span.SetTag("db.method", dbMethod)
-	return
+	return span
 }
