@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/alicebob/miniredis"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/go-redis/redis"
 	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/ext"
